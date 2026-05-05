@@ -541,8 +541,8 @@ describe("startBackgroundRefresh", () => {
     // inflightRefresh, which writes the new long-lived expiry into stored).
     // Each chain that survives then arms a 0-delay timer; when the timer
     // fires, scheduleNext re-runs and store.read() is called again.
-    pendingReads[0]({ ...stored, claudeAiOauth: { ...stored.claudeAiOauth } })
-    pendingReads[1]({ ...stored, claudeAiOauth: { ...stored.claudeAiOauth } })
+    pendingReads[0]?.({ ...stored, claudeAiOauth: { ...stored.claudeAiOauth } })
+    pendingReads[1]?.({ ...stored, claudeAiOauth: { ...stored.claudeAiOauth } })
 
     await tick(80)
 
