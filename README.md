@@ -515,15 +515,23 @@ export AMP_URL=http://127.0.0.1:3456
 export AMP_API_KEY="sgamp_user_..."   # paste from ~/.local/share/amp/secrets.json
 ```
 
-#### What's free vs. paid
+#### Billing — what's free, what isn't
 
-| Mode | Model | Routed through |
+**Default usage is free.** Amp defaults to `smart` mode, which uses Claude. Through Meridian that maps directly onto your Claude Max subscription — no charge, no token billing, no Sourcegraph credit consumption.
+
+You only pay Sourcegraph when you **explicitly opt into a non-Claude mode**, which uses a different upstream provider Meridian can't intercept:
+
+| Command | Routed through | Who pays |
 |---|---|---|
-| `smart` (default) | Claude Opus / Sonnet | Meridian → Claude Max (free) |
-| `deep` | GPT-5.5 | Forwarded to ampcode.com (Sourcegraph billing) |
-| `large` / `rush` | Other providers | Forwarded to ampcode.com (Sourcegraph billing) |
+| `amp` (interactive) | Meridian → Claude Max | **Free** (your Max sub) |
+| `amp -x "..."` | Meridian → Claude Max | **Free** |
+| `amp --mode deep ...` | Forwarder → ampcode.com (GPT-5.5) | Sourcegraph (paid Amp tier required) |
+| `amp --mode large ...` / `--mode rush ...` | Forwarder → ampcode.com | Sourcegraph (paid Amp tier required) |
+| `amp threads list / share / search / ...` | Forwarder → ampcode.com | Free (no inference) |
+| `amp skill list / tools list / mcp list / ...` | Local | Free |
+| `amp usage` | Forwarder → ampcode.com | Free (just reads your account) |
 
-Meridian only intercepts Anthropic/Claude inference. Other providers pass through normally.
+Meridian never originates a charge. It only intercepts Anthropic/Claude requests; non-Claude providers pass through unchanged so Sourcegraph bills exactly as it would have if you weren't using Meridian. Free-tier Amp users hit Sourcegraph's existing 402 paywall on `amp -x` with non-Claude modes; that's Sourcegraph's gate, not ours.
 
 #### Configuration
 
@@ -534,8 +542,11 @@ Meridian only intercepts Anthropic/Claude inference. Other providers pass throug
 
 #### Known limitations
 
-- One-time `amp login` against real `ampcode.com` is required to acquire `AMP_API_KEY`.
-- Live thread sync (multi-device updates without polling) requires WebSocket forwarding through the catch-all forwarder; verify in your environment.
+- **One-time `amp login` against real `ampcode.com`** is required to acquire `AMP_API_KEY`. The login flow itself can't be completed through Meridian (the OAuth callback needs Sourcegraph's real login page).
+- **Amp keys credentials by server URL.** Your stored key is registered for `https://ampcode.com`, not `http://127.0.0.1:3456`, so you must export `AMP_API_KEY` explicitly when pointing Amp at Meridian (see Setup above).
+- **Non-Claude modes still bill against your Sourcegraph account.** `amp --mode deep/large/rush` use providers Meridian can't intercept; the forwarder passes those requests through to `ampcode.com` and Sourcegraph charges normally. See "Billing" above for the full breakdown.
+- **Live thread sync via WebSockets** (multi-device updates without polling) goes through the catch-all forwarder; HTTP routes are verified, but the WS upgrade path hasn't been live-tested. Polling-based `amp threads list` works fine.
+- **Multimodal (image attachments) not yet live-verified.** Should work since Amp uses Claude's standard image format, but no end-to-end confirmation in this release.
 
 ### Pi
 
