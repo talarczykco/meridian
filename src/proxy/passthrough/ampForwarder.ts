@@ -90,9 +90,18 @@ export async function ampForwardRequest(c: Context): Promise<Response> {
 
   const upstreamRes = await fetch(upstreamUrl, init)
 
+  // Bun/undici fetch transparently decodes gzip/deflate/br response bodies, but
+  // the original Content-Encoding header is preserved on the Response. If we
+  // forward that header verbatim the client tries to decode an already-decoded
+  // body and fails with ZlibError. Strip Content-Encoding (and Content-Length,
+  // which no longer matches the decoded body length) so the client treats the
+  // body as identity.
   const respHeaders = new Headers()
   upstreamRes.headers.forEach((v, k) => {
-    if (HOP_BY_HOP.has(k.toLowerCase())) return
+    const lk = k.toLowerCase()
+    if (HOP_BY_HOP.has(lk)) return
+    if (lk === "content-encoding") return
+    if (lk === "content-length") return
     respHeaders.set(k, v)
   })
 

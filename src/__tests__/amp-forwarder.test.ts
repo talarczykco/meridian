@@ -211,3 +211,38 @@ describe("ampForwardRequest — streaming (SSE)", () => {
     expect(received).toBe(chunks.join(""))
   })
 })
+
+describe("ampForwardRequest — content-encoding handling", () => {
+  it("strips upstream Content-Encoding header so clients don't double-decode", async () => {
+    // Upstream returns actually-gzipped bytes. Bun fetch decodes them
+    // transparently inside the forwarder, but the Content-Encoding header
+    // remains. Forwarding that header verbatim would make the client try to
+    // gunzip an already-decoded body — the original `amp threads list` ZlibError.
+    upstreamServer?.stop()
+    const plainBody = '{"threads":[]}'
+    const gzipped = Bun.gzipSync(new TextEncoder().encode(plainBody))
+    upstreamServer = Bun.serve({
+      port: 0,
+      async fetch(_req) {
+        return new Response(gzipped, {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "content-encoding": "gzip",
+            "content-length": String(gzipped.byteLength),
+          },
+        })
+      },
+    })
+    process.env.AMP_UPSTREAM_URL = `http://127.0.0.1:${upstreamServer.port}`
+
+    const ctx = makeCtx({ method: "GET", path: "/api/internal?listThreads" })
+    const res = await ampForwardRequest(ctx)
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-encoding")).toBeNull()
+    expect(res.headers.get("content-length")).toBeNull()
+    expect(res.headers.get("content-type")).toBe("application/json")
+    const body = await res.text()
+    expect(body).toBe(plainBody)
+  })
+})
