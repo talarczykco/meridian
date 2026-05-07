@@ -488,6 +488,46 @@ MERIDIAN_DEFAULT_AGENT=forgecode meridian
 
 ForgeCode uses reqwest's default User-Agent, so automatic detection isn't possible. The `MERIDIAN_DEFAULT_AGENT` env var tells Meridian to use the ForgeCode adapter for all unrecognized requests. If you run other agents alongside ForgeCode, use the `x-meridian-agent: forgecode` header instead (add `[providers.headers]` to your `.forge.toml`).
 
+### Amp (Sourcegraph)
+
+[Amp](https://ampcode.com) is Sourcegraph's coding agent (npm: `@sourcegraph/amp`). Meridian's Amp adapter uses **selective passthrough**: Claude inference (Amp's `smart` mode) routes through your Claude Max subscription, while every other Amp endpoint (threads sync, attachments, telemetry, login, usage, web UI, code review) is forwarded transparently to `https://ampcode.com` so the entire Amp app keeps working.
+
+Install Amp once and log in against the real `ampcode.com` to acquire your `AMP_API_KEY`:
+
+```bash
+npm install -g @sourcegraph/amp
+amp login
+```
+
+Then point Amp at Meridian for subsequent invocations:
+
+```bash
+export AMP_URL=http://127.0.0.1:3456
+amp -x "say hi"
+```
+
+#### What's free vs. paid
+
+| Mode | Model | Routed through |
+|---|---|---|
+| `smart` (default) | Claude Opus / Sonnet | Meridian → Claude Max (free) |
+| `deep` | GPT-5.5 | Forwarded to ampcode.com (Sourcegraph billing) |
+| `large` / `rush` | Other providers | Forwarded to ampcode.com (Sourcegraph billing) |
+
+Meridian only intercepts Anthropic/Claude inference. Other providers pass through normally.
+
+#### Configuration
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `AMP_UPSTREAM_URL` | `https://ampcode.com` | Where to forward non-inference traffic |
+| `MERIDIAN_AMP_FORWARD_DISABLED` | unset | Set to `true` to disable forwarding entirely (only inference works; threads/sync/etc. break) |
+
+#### Known limitations
+
+- One-time `amp login` against real `ampcode.com` is required to acquire `AMP_API_KEY`.
+- Live thread sync (multi-device updates without polling) requires WebSocket forwarding through the catch-all forwarder; verify in your environment.
+
 ### Pi
 
 Pi uses the `@mariozechner/pi-ai` library which supports a configurable `baseUrl` on the model. Add a provider-level override in `~/.pi/agent/models.json`:
@@ -557,6 +597,7 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:3456
 | [Open WebUI](https://github.com/open-webui/open-webui) | ✅ Verified | OpenAI-compatible endpoints — set base URL to `http://127.0.0.1:3456` |
 | [Pi](https://github.com/mariozechner/pi-coding-agent) | ✅ Verified | models.json config (see above) — requires `MERIDIAN_DEFAULT_AGENT=pi` |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | ✅ Verified | `ANTHROPIC_BASE_URL` — remote clients share a Max subscription over the network; client CWD preserved in system prompt |
+| [Amp (Sourcegraph)](https://ampcode.com) | ✅ Verified | `AMP_URL` — selective passthrough (Claude inference free; threads/attachments/telemetry forwarded to ampcode.com) |
 | [Continue](https://github.com/continuedev/continue) | 🔲 Untested | OpenAI-compatible endpoints should work — set `apiBase` to `http://127.0.0.1:3456` |
 
 Tested an agent or built a plugin? [Open an issue](https://github.com/rynfar/meridian/issues) and we'll add it.
@@ -568,13 +609,16 @@ src/proxy/
 ├── server.ts              ← HTTP orchestration (routes, SSE streaming, concurrency)
 ├── adapter.ts             ← AgentAdapter interface
 ├── adapters/
-│   ├── detect.ts          ← Agent detection from request headers
+│   ├── detect.ts          ← Agent detection from request headers / paths
 │   ├── opencode.ts        ← OpenCode adapter
 │   ├── forgecode.ts       ← ForgeCode adapter
 │   ├── crush.ts           ← Crush adapter
 │   ├── droid.ts           ← Droid adapter
 │   ├── pi.ts              ← Pi adapter
+│   ├── amp.ts             ← Amp adapter (snake_case tools, x-amp-thread-id)
 │   └── passthrough.ts     ← LiteLLM passthrough adapter
+├── passthrough/
+│   └── ampForwarder.ts    ← Selective HTTP forward proxy → AMP_UPSTREAM_URL
 ├── query.ts               ← SDK query options builder
 ├── errors.ts              ← Error classification
 ├── models.ts              ← Model mapping (sonnet/opus/haiku, agentMode)
