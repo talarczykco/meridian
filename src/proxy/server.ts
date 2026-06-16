@@ -1962,29 +1962,6 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
                     }
                   }
                 }
-              } catch (streamErr) {
-                if (streamErr instanceof UpstreamIdleError) {
-                  if (!streamClosed) {
-                    safeEnqueue(
-                      encoder.encode(
-                        `event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "upstream_timeout", message: `Upstream stalled: no data for ${streamErr.sinceLastMs}ms` } })}\n\n`,
-                      ),
-                      "upstream_stalled",
-                    )
-                    safeEnqueue(
-                      encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`),
-                      "upstream_stalled",
-                    )
-                    streamClosed = true
-                    try {
-                      controller.close()
-                    } catch {
-                      /* already closed */
-                    }
-                  }
-                } else {
-                  throw streamErr
-                }
               } finally {
                 clearInterval(heartbeat)
               }
@@ -2211,7 +2188,13 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
                 error: errMsg,
                 ...(stderrOutput ? { stderr: stderrOutput } : {})
               })
-              const streamErr = classifyError(errMsg)
+              const streamErr = error instanceof UpstreamIdleError
+                ? {
+                    status: 504,
+                    type: "upstream_timeout",
+                    message: `Upstream stalled: no data for ${error.sinceLastMs}ms`,
+                  }
+                : classifyError(errMsg)
               claudeLog("proxy.anthropic.error", { error: errMsg, classified: streamErr.type })
 
               // Surface the SDK termination reason (max_turns / process_exit / aborted)
