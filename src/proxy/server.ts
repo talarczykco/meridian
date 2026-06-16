@@ -6,6 +6,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { query } from "@anthropic-ai/claude-agent-sdk"
 import { rateLimitStore } from "./rateLimitStore"
+import { guardUpstreamIdle, UpstreamIdleError } from "./streamIdleGuard"
 import { fetchOAuthUsage } from "./oauthUsage"
 import { resolveSdkWorkingDirectory } from "./cwd"
 import type { Context } from "hono"
@@ -95,6 +96,12 @@ export type { LineageResult }
 const exec = promisify(execCallback)
 
 let claudeExecutable = ""
+
+// Max gap between real upstream messages before we treat the stream as stalled.
+// Must be > slowest legitimate TTFB / server-side thinking pause, and < the
+// "feels dead" threshold. Pylon's turn watchdog (120s warn / 180s abort) is the
+// looser backstop, so this fires first.
+const UPSTREAM_IDLE_MS = 90_000
 
 function credentialStoreForProfile(profile: ResolvedProfile): CredentialStore | undefined {
   if (profile.type !== "claude-max") return undefined
@@ -1726,8 +1733,17 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
               let nextClientBlockIndex = 0
               const sdkToClientIndex = new Map<number, number>()
 
+              const guardedResponse = guardUpstreamIdle(response, UPSTREAM_IDLE_MS, (sinceLastMs) =>
+                claudeLog("upstream.stalled", {
+                  mode: "stream",
+                  model,
+                  sinceLastMs,
+                  streamEventsSeen,
+                  firstChunkAt: firstChunkAt ?? null,
+                }),
+              )
               try {
-                for await (const message of response) {
+                for await (const message of guardedResponse) {
                   if (streamClosed) {
                     break
                   }
@@ -1945,6 +1961,29 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
                       }
                     }
                   }
+                }
+              } catch (streamErr) {
+                if (streamErr instanceof UpstreamIdleError) {
+                  if (!streamClosed) {
+                    safeEnqueue(
+                      encoder.encode(
+                        `event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "upstream_timeout", message: `Upstream stalled: no data for ${streamErr.sinceLastMs}ms` } })}\n\n`,
+                      ),
+                      "upstream_stalled",
+                    )
+                    safeEnqueue(
+                      encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`),
+                      "upstream_stalled",
+                    )
+                    streamClosed = true
+                    try {
+                      controller.close()
+                    } catch {
+                      /* already closed */
+                    }
+                  }
+                } else {
+                  throw streamErr
                 }
               } finally {
                 clearInterval(heartbeat)
