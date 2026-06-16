@@ -27,7 +27,7 @@ describe("guardUpstreamIdle", () => {
   it("passes through messages while the source is active", async () => {
     const src = makeSource<number>()
     const out: number[] = []
-    const p = (async () => { for await (const v of guardUpstreamIdle(src.iterable, 50)) out.push(v) })()
+    const p = (async () => { for await (const v of guardUpstreamIdle(src.iterable, 500)) out.push(v) })()
     src.push(1); await new Promise((r) => setTimeout(r, 5))
     src.push(2); await new Promise((r) => setTimeout(r, 5))
     src.finish()
@@ -35,10 +35,10 @@ describe("guardUpstreamIdle", () => {
     expect(out).toEqual([1, 2])
   })
 
-  it("throws UpstreamIdleError when the source goes silent past idleMs", async () => {
+  it("throws UpstreamIdleError when the source goes silent even if onStall throws", async () => {
     const src = makeSource<number>()
     const stalls: number[] = []
-    const p = (async () => { for await (const _ of guardUpstreamIdle(src.iterable, 30, (ms) => stalls.push(ms))) { /* drain */ } })()
+    const p = (async () => { for await (const _ of guardUpstreamIdle(src.iterable, 30, (ms) => { stalls.push(ms); throw new Error("observer failed") })) { /* drain */ } })()
     src.push(1) // one real chunk, then silence
     let err: unknown
     try { await p } catch (e) { err = e }
@@ -52,6 +52,26 @@ describe("guardUpstreamIdle", () => {
     let err: unknown
     try { for await (const _ of guardUpstreamIdle(src.iterable, 20)) { /* none */ } } catch (e) { err = e }
     expect(err).toBeInstanceOf(UpstreamIdleError)
+  })
+
+  it("calls return on the source iterator after an idle stall", async () => {
+    let returned = false
+    const source: AsyncIterable<number> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => new Promise<IteratorResult<number>>(() => {}),
+          return: () => {
+            returned = true
+            return Promise.resolve({ done: true, value: undefined })
+          },
+        }
+      },
+    }
+
+    let err: unknown
+    try { for await (const _ of guardUpstreamIdle(source, 20)) { /* none */ } } catch (e) { err = e }
+    expect(err).toBeInstanceOf(UpstreamIdleError)
+    expect(returned).toBe(true)
   })
 
   it("idleMs<=0 disables the guard (pure pass-through)", async () => {

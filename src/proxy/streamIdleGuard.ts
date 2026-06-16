@@ -45,7 +45,11 @@ export async function* guardUpstreamIdle<T>(
         const remaining = Math.max(0, idleMs - (Date.now() - lastAt))
         timer = setTimeout(() => {
           const sinceLastMs = Date.now() - lastAt
-          onStall?.(sinceLastMs)
+          try {
+            onStall?.(sinceLastMs)
+          } catch {
+            // Observer errors must not prevent rejecting the guarded iterator.
+          }
           reject(new UpstreamIdleError(idleMs, sinceLastMs))
         }, remaining)
       })
