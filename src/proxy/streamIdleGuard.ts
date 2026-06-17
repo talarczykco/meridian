@@ -10,6 +10,14 @@
  * fixed interval, which resets the *client's* (pi's) byte-level idle timer. A
  * stalled upstream is therefore invisible to the client and would wedge the
  * turn forever. This guard is the authoritative upstream-liveness check.
+ *
+ * COORDINATION CONTRACT (Pylon Orchestrator): this guard owns *model-stream*
+ * liveness. Pylon's runtime stall watchdog is only a BACKSTOP for the
+ * model-wait gap with no tool in flight, and keeps its abort threshold above
+ * this guard's idle limit (default MERIDIAN_IDLE_TIMEOUT_SECONDS = 120s) so the
+ * two layers never race to abort the same hung model. If this default rises,
+ * re-check Pylon's STALL_ABORT_MS. See
+ * pylon-orchestrator/docs/circuit/specs/stall-watchdog-tool-exempt.md.
  */
 export class UpstreamIdleError extends Error {
   readonly idleMs: number
