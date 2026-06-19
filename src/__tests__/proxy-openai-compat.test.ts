@@ -701,3 +701,78 @@ describe("POST /v1/chat/completions — MERIDIAN_API_KEY auth forwarding (#415)"
     expect(res.status).toBe(401)
   })
 })
+
+describe("POST /v1/chat/completions — Coder Mux propose_name interceptor", () => {
+  it("intercepts and mocks response when propose_name tool is present", async () => {
+    const app = createTestApp()
+    const res = await postChatCompletion(app, {
+      model: "claude-3-5-sonnet",
+      messages: [{ role: "user", content: "My Awesome Workspace!" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "propose_name",
+          description: "Propose a name",
+          parameters: { type: "object", properties: { name: { type: "string" } } }
+        }
+      }]
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as Record<string, unknown>
+    expect(body.object).toBe("chat.completion")
+    expect(typeof body.id).toBe("string")
+    expect((body.id as string).startsWith("chatcmpl-mock-")).toBe(true)
+    expect(body.model).toBe("claude-3-5-sonnet")
+
+    const choices = body.choices as Array<Record<string, any>>
+    expect(choices).toBeArray()
+    expect(choices[0]!.message.role).toBe("assistant")
+    expect(choices[0]!.message.content).toContain("Initializing workspace configuration name: my-awesome-workspace")
+    expect(choices[0]!.finish_reason).toBe("tool_calls")
+
+    const toolCalls = choices[0]!.message.tool_calls
+    expect(toolCalls).toBeArray()
+    expect(toolCalls[0].function.name).toBe("propose_name")
+    
+    const args = JSON.parse(toolCalls[0].function.arguments)
+    expect(args.name).toBe("my-awesome-workspace")
+  })
+
+  it("limits workspace name to 24 characters and cleans special chars", async () => {
+    const app = createTestApp()
+    const res = await postChatCompletion(app, {
+      model: "claude-3-5-sonnet",
+      messages: [{ role: "user", content: "Proj-A!@#$ %^&*()_+{}|:<>? longest name ever" }],
+      tools: [{
+        type: "function",
+        function: { name: "propose_name" }
+      }]
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as Record<string, any>
+    const toolCalls = body.choices[0].message.tool_calls
+    const args = JSON.parse(toolCalls[0].function.arguments)
+    expect(args.name).toBe("proj-a-longest-name-ever")
+  })
+
+  it("falls back to coder-mux-env if prompt is completely stripped or empty", async () => {
+    const app = createTestApp()
+    const res = await postChatCompletion(app, {
+      model: "claude-3-5-sonnet",
+      messages: [{ role: "user", content: "!!!@#$%" }],
+      tools: [{
+        type: "function",
+        function: { name: "propose_name" }
+      }]
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as Record<string, any>
+    const toolCalls = body.choices[0].message.tool_calls
+    const args = JSON.parse(toolCalls[0].function.arguments)
+    expect(args.name).toBe("coder-mux-env")
+  })
+})
+

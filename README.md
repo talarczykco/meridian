@@ -149,7 +149,7 @@ The Claude Code SDK provides programmatic access to Claude. But your favorite co
 ## Features
 
 - **Standard Anthropic API** — drop-in compatible with any tool that supports a custom `base_url`
-- **OpenAI-compatible API** — `/v1/chat/completions` and `/v1/models` for tools that only speak the OpenAI protocol (Open WebUI, Continue, etc.) — no LiteLLM needed, including `image_url` support for data URLs
+- **OpenAI-compatible API** — `/v1/chat/completions` and `/v1/models` for tools that only speak the OpenAI protocol (Open WebUI, Continue, Coder Mux with `propose_name` workspace auto-naming, etc.) — no LiteLLM needed, including `image_url` support for data URLs
 - **Session management** — conversations persist across requests, survive compaction and undo, resume after proxy restarts
 - **Streaming** — full SSE streaming with MCP tool filtering
 - **Concurrent sessions** — run parent and subagent requests in parallel

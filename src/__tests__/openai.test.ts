@@ -11,6 +11,8 @@ import {
   translateAnthropicSseEvent,
   createSseTranslator,
   buildModelList,
+  isCoderMuxProposeNameRequest,
+  handleCoderMuxProposeName,
 } from "../proxy/openai"
 
 // ---------------------------------------------------------------------------
@@ -1199,6 +1201,94 @@ describe("buildModelList", () => {
 
   it("all models have correct object type", () => {
     buildModelList(true).forEach(m => expect(m.object).toBe("model"))
+  })
+
+
+
+  // ---------------------------------------------------------------------------
+  // Coder Mux propose_name Interceptor
+  // ---------------------------------------------------------------------------
+
+  describe("Coder Mux propose_name support", () => {
+    it("isCoderMuxProposeNameRequest returns true if propose_name function tool is in tools", () => {
+      expect(isCoderMuxProposeNameRequest({
+        tools: [{ type: "function", function: { name: "propose_name", parameters: {} } }]
+      })).toBe(true)
+
+      expect(isCoderMuxProposeNameRequest({
+        tools: [{ function: { name: "propose_name", parameters: {} } } as any]
+      })).toBe(true)
+    })
+
+    it("isCoderMuxProposeNameRequest returns false if propose_name is not present", () => {
+      expect(isCoderMuxProposeNameRequest({})).toBe(false)
+      expect(isCoderMuxProposeNameRequest({ tools: [] })).toBe(false)
+      expect(isCoderMuxProposeNameRequest({
+        tools: [{ type: "function", function: { name: "other_tool", parameters: {} } }]
+      })).toBe(false)
+    })
+
+    it("handleCoderMuxProposeName cleans the user message and creates correct completion structure", () => {
+      const body = {
+        model: "claude-3-5-sonnet",
+        messages: [{ role: "user" as const, content: "My Project 2026" }],
+        tools: [{ type: "function" as const, function: { name: "propose_name", parameters: {} } }]
+      }
+
+      const completion = handleCoderMuxProposeName(body)
+      expect(completion.object).toBe("chat.completion")
+      expect(completion.model).toBe("claude-3-5-sonnet")
+      expect(completion.choices[0]!.message.role).toBe("assistant")
+      expect(completion.choices[0]!.message.content).toBe("Initializing workspace configuration name: my-project-2026")
+      expect(completion.choices[0]!.finish_reason).toBe("tool_calls")
+      
+      const toolCall = completion.choices[0]!.message.tool_calls![0] as any
+      expect(toolCall.function.name).toBe("propose_name")
+      expect(JSON.parse(toolCall.function.arguments)).toEqual({ name: "my-project-2026" })
+    })
+
+    it("handleCoderMuxProposeName limits folder name to 24 chars", () => {
+      const body = {
+        messages: [{ role: "user" as const, content: "verylongprojectnamethatshouldbe-truncated" }],
+        tools: [{ type: "function" as const, function: { name: "propose_name", parameters: {} } }]
+      }
+
+      const completion = handleCoderMuxProposeName(body)
+      const toolCall = completion.choices[0]!.message.tool_calls![0] as any
+      const name = JSON.parse(toolCall.function.arguments).name
+      expect(name).toBe("verylongprojectnamethats")
+      expect(name.length).toBe(24)
+    })
+
+    it("handleCoderMuxProposeName handles empty user prompt with safe fallback", () => {
+      const body = {
+        messages: [{ role: "user" as const, content: "!!!@@@!!!" }],
+        tools: [{ type: "function" as const, function: { name: "propose_name", parameters: {} } }]
+      }
+
+      const completion = handleCoderMuxProposeName(body)
+      const toolCall = completion.choices[0]!.message.tool_calls![0] as any
+      const name = JSON.parse(toolCall.function.arguments).name
+      expect(name).toBe("coder-mux-env")
+    })
+
+    it("handleCoderMuxProposeName extracts array user prompt and handles missing user prompt", () => {
+      const arrayBody = {
+        messages: [{ role: "user" as const, content: [{ type: "text", text: "Array content here" }] }],
+        tools: [{ type: "function" as const, function: { name: "propose_name", parameters: {} } }]
+      }
+      let completion = handleCoderMuxProposeName(arrayBody)
+      let toolCall = completion.choices[0]!.message.tool_calls![0] as any
+      expect(JSON.parse(toolCall.function.arguments).name).toBe("array-content-here")
+
+      const noUserBody = {
+        messages: [],
+        tools: [{ type: "function" as const, function: { name: "propose_name", parameters: {} } }]
+      }
+      completion = handleCoderMuxProposeName(noUserBody)
+      toolCall = completion.choices[0]!.message.tool_calls![0] as any
+      expect(JSON.parse(toolCall.function.arguments).name).toBe("workspace")
+    })
   })
 
   it("uses provided timestamp", () => {

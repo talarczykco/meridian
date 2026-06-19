@@ -849,3 +849,75 @@ export function buildModelList(isMaxSubscription: boolean, now = Math.floor(Date
     },
   ]
 }
+
+// ---------------------------------------------------------------------------
+// Coder Mux Integration Support
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if the request is a Coder Mux workspace setup request featuring the `propose_name` tool.
+ */
+export function isCoderMuxProposeNameRequest(body: OpenAiChatRequest): boolean {
+  const tools = body.tools;
+  return Array.isArray(tools) && tools.some((tool: any) => tool.type === "function" && tool.function?.name === "propose_name" || tool.function?.name === "propose_name");
+}
+
+/**
+ * Handle Coder Mux's `propose_name` workspace folder naming tool directly,
+ * bypassing downstream Anthropic SDK translation and strict schema filtering.
+ */
+export function handleCoderMuxProposeName(body: OpenAiChatRequest): OpenAiCompletion {
+  const userMsg = body.messages?.find((msg: any) => msg.role === "user");
+  let standardMessage = "workspace";
+  if (userMsg && userMsg.content) {
+    if (typeof userMsg.content === "string") {
+      standardMessage = userMsg.content;
+    } else if (Array.isArray(userMsg.content)) {
+      standardMessage = userMsg.content
+        .map((p: any) => {
+          if (p.type === "text" && typeof p.text === "string") return p.text;
+          return "";
+        })
+        .filter(Boolean)
+        .join("");
+    }
+  }
+
+  // Format the text into a clean folder/slug naming convention
+  const cleanedSlug = standardMessage
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-");
+
+  const dynamicWorkspaceName = cleanedSlug.slice(0, 24) || "coder-mux-env";
+
+  return {
+    id: `chatcmpl-mock-${Math.random().toString(36).slice(2, 11)}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model: (typeof body.model === "string" && body.model) ? body.model : "claude-3-5-sonnet",
+    choices: [{
+      index: 0,
+      message: {
+        role: "assistant",
+        content: `Initializing workspace configuration name: ${dynamicWorkspaceName}`,
+        tool_calls: [{
+          id: `call_${Math.random().toString(36).slice(2, 11)}`,
+          type: "function",
+          function: {
+            name: "propose_name",
+            arguments: JSON.stringify({ name: dynamicWorkspaceName })
+          }
+        }]
+      },
+      finish_reason: "tool_calls"
+    }],
+    usage: {
+      prompt_tokens: 15,
+      completion_tokens: 20,
+      total_tokens: 35
+    }
+  };
+}
+

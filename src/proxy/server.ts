@@ -49,7 +49,7 @@ import { refreshOAuthToken, ensureFreshToken, startBackgroundRefresh, stopBackgr
 import { checkPluginConfigured } from "./setup"
 import { mapModelToClaudeModel, resolveClaudeExecutableAsync, resolveSdkModelDefaults, isClosedControllerError, getClaudeAuthStatusAsync, getAuthCacheInfo, getResolvedClaudeExecutableInfo, hasExtendedContext, stripExtendedContext, recordExtendedContextUnavailable } from "./models"
 import type { AnthropicSseEvent } from "./openai"
-import { translateOpenAiToAnthropic, translateAnthropicToOpenAi, buildModelList, createSseTranslator } from "./openai"
+import { translateOpenAiToAnthropic, translateAnthropicToOpenAi, buildModelList, createSseTranslator, isCoderMuxProposeNameRequest, handleCoderMuxProposeName } from "./openai"
 import { extractAdvisorModel, getLastUserMessage, stripAdvisorTools } from "./messages"
 import { requireAuth, authEnabled } from "./auth"
 import { detectAdapter } from "./adapters/detect"
@@ -2686,6 +2686,14 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
   // See src/proxy/openai.ts for the translation logic and design rationale.
   app.post("/v1/chat/completions", async (c) => {
     const rawBody = await c.req.json() as Record<string, unknown>
+
+    // --- PATH INTERCEPTOR FOR CODER MUX ---
+    // Check incoming payload array for the custom workspace setup schema
+    if (isCoderMuxProposeNameRequest(rawBody)) {
+      return c.json(handleCoderMuxProposeName(rawBody))
+    }
+    // --- END CODER MUX PATCH ---
+
     const anthropicBody = translateOpenAiToAnthropic(rawBody)
 
     if (!anthropicBody) {
